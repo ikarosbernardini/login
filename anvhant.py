@@ -2,6 +2,8 @@ import json # importerar json för att kunna läsa och skriva till .json filen
 import hashlib # importerar hashlib för att kunna hasha lösenord
 from anv import Användare as A # importerar klassen Användare från anv.py
 from datetime import datetime # importerar datetime för att kunna logga tidpunkter
+import bcrypt
+import sqlite3
 
 # ANSI escape codes för färg och stil i terminalen
 RESET = "\033[0m"
@@ -27,7 +29,7 @@ class Användarhantering:
         """
         Tar de inmatade lösenordet och retunerar dess hashade värde.
         """
-        return hashlib.sha256(lösenord.encode("utf-8")).hexdigest() # hashar lösenordet så att det inte sparas i klartext. med andra ord krypterar lösenordet.
+        return bcrypt.hashpw(lösenord.encode("utf-8"), bcrypt.gensalt()) # hashar lösenordet så att det inte sparas i klartext. med andra ord krypterar lösenordet.
     
 
     def återgå(self) -> None:
@@ -42,28 +44,26 @@ class Användarhantering:
         är sparad och kan användas igen.
         """
         try: # try & except för att hantera om filen inte finns.
-            with open(self.filväg, "r") as f:  # öppnar filen i läsläge
-                innehåll = f.read()  # läser in filens innehåll
-                if not innehåll.strip():  # kollar om filen är tom
-
-                    return []
-                jsontext = json.loads(innehåll) # läser in filens innehåll och konverterar det till en dict med "json.loads"
-                return [A(anv["namn"], anv["lösenord_hash"]) for anv in jsontext] # skapar en lista av Användare objekt från den inlästa json-datan
-        except FileNotFoundError: 
-            print("\nAnvändaren hittades inte!")  # retunerar ett felmeddelande om filen inte finns.
+            conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+            c = conn.cursor()
+            c.execute("SELECT username, password_hash FROM users") # hämtar alla användare
+            rader = c.fetchall() # hämtar alla rader från resultatet
+            conn.close() # stänger anslutningen till databasen
+            return [A(namn=namn, lösenord_hash=lösenord_hash) for namn, lösenord_hash in rader] # retunerar en lista med användare som Användare objekt
+        except sqlite3.Error as e:
+            print(f"\nKunde inte läsa in användare: {e}") # felmeddelande om filen inte finns
             return []
-        except json.JSONDecodeError:
-            print("\nFel vid läsning av användare, filen är korrupt eller tom.")
-            return []
-    def logga_händelse(self, händelse: str) -> None:
+    def logga_händelse(self, händelse: str, användarnamn: str = "okänd") -> None:
         """
         Loggar händelser med tidsstämpel till min loggfil.
         """
         tid = datetime.now().strftime("%Y-%m-%d %H:%M:%S") # hämtar nuvarande tid och datum
-        rad = f"[{tid}] {händelse}\n" # formaterar raden som ska loggas
         try:
-            with open("historik.log", "a") as f: # öppnar loggfilen i tilläggsläge
-                f.write(rad) # skriver raden till loggfilen
+            conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+            c = conn.cursor()
+            c.execute("INSERT INTO history (username, action) VALUES (?, ?)", (användarnamn, händelse, tid)) # infogar händelsen i history tabellen
+            conn.commit()
+            conn.close()
         except Exception as e:
             print(f"\nKunde inte logga händelse: {e}") # felmeddelande om loggningen misslyckas
 
@@ -72,12 +72,18 @@ class Användarhantering:
         Visar innehållet i loggfilen i terminalen, denna funktion är för administratörer.
         """
         try:
-            with open("historik.log", "r") as f: # öppnar loggfilen i läsläge
-                innehåll = f.read() # läser in filens innehåll
-                print(f"\n{FET}{UNDERSTRUKEN}Loggfilens innehåll:{RESET}") 
-                print(innehåll) if innehåll.strip() else print("Ingen historik hittades.") # skriver ut innehållet i loggfilen
-        except FileNotFoundError:
-            print("\nLoggfilen hittades inte.") # felmeddelande om loggfilen inte finns.
+            conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+            c = conn.cursor()
+            c.execute("SELECT timestamp, username, action FROM history ORDER BY timestamp DESC") # hämtar alla händelser sorterade efter tid
+            rader = c.fetchall() # hämtar alla rader från resultatet
+            conn.close() # stänger anslutningen till databasen
+
+            print(f"\n{FET}{UNDERSTRUKEN}Loggfilens innehåll:{RESET}\n")
+            if rader:
+                for tid, användare, händelse in rader:
+                    print(f"[{tid}] ({användare}) {händelse}")
+        except sqlite3.Error as e:
+            print(f"\nKunde inte läsa logg: {e}") # felmeddelande om loggningen misslyckas
         self.återgå() # pausar programmet tills användaren trycker på Enter.
         
     def spara_användare(self): 
@@ -85,14 +91,15 @@ class Användarhantering:
         Sparar nuvarande användarlista till .json filen.
         """
         try:
-            dict_lista = [anv.till_dict() for anv in self.användare] # skapar en lista av dicts från self.användare med hjälp av metoden till_dict i klassen Användare i anv.py
-             # sparar användarlistan i .json filen
-            with open(self.filväg, "w") as f: 
-                #skapa en dict_lista isf self.användare
-                json_text = json.dumps(dict_lista) # konverterar listan av dicts till en json-sträng
-                f.write(json_text) # skriver json-strängen till filen
-        except FileNotFoundError:
-            print("\nKunde inte spara användare, Användaren hittades inte!")
+            conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+            c = conn.cursor()
+
+            for anv in self.användare:
+                c.execute("INSERT OR REPLACE INTO users (username, password_hash) VALUES (?, ?)", (anv.namn, anv.lösenord_hash))
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"\nKunde inte spara användare: {e}")
 
 
 
@@ -104,16 +111,20 @@ class Användarhantering:
         namn: str = input("Nytt användarnamn: ").strip() # tar bort eventuella extra mellanslag runt användarnamnet.
         lösenord: str = input("Nytt lösenord: ").strip() # tar bort eventuella extra mellanslag runt lösenordet.
 
-        if any(anv.namn == namn for anv in self.användare): # om användarnamnet redan finns i systemet så får användaren ett felmeddelande.
+        conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM users WHERE username = ?", (namn,))
+        if c.fetchone(): # om användarnamnet redan finns i systemet så får användaren ett felmeddelande.
             print("\nAnvändarnamnet finns redan.")
             self.logga_händelse(f"Registrering misslyckades, {namn} var upptaget.") # loggar händelsen att en användare försökte registera sig med ett redan upptaget namn
+            conn.close()
             return False
-        self.användare.append( # om användarnamnet inte finns så skapas en ny användare med hjälp av klassen Användare i anv.py
-            A(namn, self.hasha_lösenord(lösenord))
-          #  {"namn": namn, "lösenord_hash": self.hasha_lösenord(lösenord)}
-          # 
-        )
-        self.spara_användare() # sparar den nya användaren i .json filen
+        lösenord_hash = self.hasha_lösenord(lösenord)
+        c.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (namn, lösenord_hash))
+        conn.commit()
+        conn.close()
+        
         self.logga_händelse(f"Ny användare registrerad: {namn}") # loggar händelsen att en ny användare har registrerats
         print("\nAnvändare registerad.") # bekräftelse till användaren att registreringen lyckades.
         return True
@@ -122,21 +133,32 @@ class Användarhantering:
         """
         En funktion för att byta lösenord för en befintlig användare.
         """
-        for anv in self.användare: # loopar igenom alla användare i systemet
-            if anv.namn == användarnamn: # om användarnamnet matchar den inmatade användaren
-                nuv_lös = input("Ange nuvarande lösenord: ")
-                if anv.lösenord_hash == self.hasha_lösenord(nuv_lös): # om det inmatade lösenordet matchar det sparade lösenordet så körs koden vidare till nedan.
-                    nytt_lös = input("Ange nytt lösenord: ").strip() # tar bort eventuella extra mellanslag runt lösenordet.
-                    anv.lösenord_hash = self.hasha_lösenord(nytt_lös) # uppdaterar lösenordet med det nya hashade lösenordet.
-                    self.spara_användare() # sparar ändringarna i .json filen
-                    self.logga_händelse(f"Lösenord ändrat för användare: {användarnamn}") # loggar händelsen att en användare har bytt lösenord
-                    print("\nLösenordet är ändrat.") # bekräftelse till användaren att lösenordsbytet lyckades.
-                    return
-                else:
-                    print("\nFelaktigt lösenord.")
-                    self.logga_händelse(f"Lösenordsbyte misslyckades för {användarnamn}, felaktigt lösenord inmatat.") # loggar händelsen att en användare försökte byta lösen
-                    return
+    
+        nuv_lös = input("Ange nuvarande lösenord: ").strip()
+       
+        conn = sqlite3.connect("data/anvdata.db") # ansluter till SQLite databasen
+        c = conn.cursor()
+        c.execute("SELECT password_hash FROM users WHERE username = ?", (användarnamn,))
+        resultat = c.fetchone()
+        if resultat:
+            sparat_lösen_hash = resultat[0]
+            if bcrypt.checkpw(nuv_lös.encode("utf-8"), sparat_lösen_hash): # om lösenordet stämmer så körs koden vidare till nedan.
+                nytt_lös = input("Ange nytt lösenord: ").strip()
+                nytt_lös_hash = self.hasha_lösenord(nytt_lös)
+                c.execute("UPDATE users SET password_hash = ? WHERE username = ?", (nytt_lös_hash, användarnamn))
+                conn.commit()
+                conn.close()
+                self.logga_händelse(f"Lösenord ändrat för användare: {användarnamn}") # loggar händelsen att en användare har bytt lösenord
+                print(f"\nLösenordet för användaren {användarnamn} {GRÖN}{FET}uppdaterades{RESET}.") # bekräftelse till användaren att lösenordsbytet lyckades.
+                self.återgå() # pausar programmet tills användaren trycker på Enter.
+                return
+           
+        else:
+            print("\nFelaktigt lösenord.")
+            self.logga_händelse(f"Lösenordsbyte misslyckades för {användarnamn}, felaktigt lösenord inmatat.") # loggar händelsen att en användare försökte byta lösen
+            return
         print("\nAnvändaren hittades inte.")
+        conn.close()
         self.återgå() # pausar programmet tills användaren trycker på Enter.
 
     def byt_namn(self):
@@ -248,21 +270,4 @@ class Användarhantering:
         self.inloggad_anv: A | None = None  # håller reda på vilken användare som är inloggad.
 
 if __name__ == "__main__": # testkod för att se att allt fungerar som det ska.
-    hantering = Användarhantering("test_användare.json")
-
-    # Registrera en ny användare
-
-    test_anv = A("Kalle", hantering.hasha_lösenord("Telia123"))
-    hantering.användare.append(test_anv)
-    hantering.spara_användare()
-
-    # Läs in och visa
-
-    hantering.användare = hantering.läs_in_användare()
-    for anv in hantering.användare:
-        print(f"Användare: {anv.namn}, Lösenord hash: {anv.lösenord_hash}")
-
-    # Testa inlogging
-    hantering.spara_användare()
-    hantering.logga_in()
-
+    pass
