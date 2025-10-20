@@ -1,8 +1,10 @@
 FROM python:3.11-slim
-RUN pip install flask
-# Kopiera hela projektet
-COPY . /app
-WORKDIR /app
-# Kör mitt skript.
-CMD ["python", "main.py"]
 
+WORKDIR /app
+
+COPY src/ /app/src/
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+CMD ["python", "src/main.py"]

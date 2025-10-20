@@ -1,5 +1,8 @@
 from anvhant import Användarhantering 
 from anv import Användare 
+from db import init_db 
+init_db() # initierar databasen om den inte redan finns.
+
 
 # importerar klassen Användarhantering som innehåller alla mina menyvals funktioner som bokstaven "a".
 
@@ -107,24 +110,19 @@ def main() -> None:
     """
     Startar programmet och kallar på menyerna.
     """
-    hantering = Användarhantering("anvdata.json") # skapar ett objekt av klassen Användarhantering med filnamnet "anvdata.json"
+    hantering = Användarhantering("data/anvdata.db") # skapar ett objekt av klassen Användarhantering med filnamnet "anvdata.json"
     if meny_innan_inloggning(hantering):
         meny_efter_inloggning(hantering) # kallar på menyn efter inloggning
 
-        
-    
 
-if __name__ == "__main__": # startar programmet
-    main() # kallar på main funktionen
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"\n{RÖD}Ett oväntat fel inträffade:{RESET} {e}")
 
 
 
 
-    # att göra så du behöver bekräfta lösenord när du byter namn på användare # check
-    # finslipa menyer med utseende mässig pimpning
-    # type hinta allt # check
-    # kommentera allt # check
-    # hantera fel bättre 
-    # läs in all kod. 
-    # läg till datum för skapade användare och skicka logarna till hisotrik.log filen. 
+
     
